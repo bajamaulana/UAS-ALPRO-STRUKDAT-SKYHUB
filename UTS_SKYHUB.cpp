@@ -94,7 +94,13 @@ namespace SkyHub {
     // [ALPRO-2] POINTER GLOBAL AKSES MEMORI RAM
     Penerbangan* headPenerbangan = nullptr;
     PetugasBandara* currentShiftPetugas = nullptr;
-    UndoAction* topUndoStack = nullptr;
+    
+    // =========================================================================
+    // PERBAIKAN LOGIKA UNDO: Memisahkan Stack Tunggal Menjadi Dua Jalur Role
+    // =========================================================================
+    UndoAction* undoStackMaskapai = nullptr; 
+    UndoAction* undoStackBandara = nullptr;  
+    
     PenumpangNode* rootPassengerAVL = nullptr;
       vector<string> arsipKeberangkatan = {};
 
@@ -210,21 +216,21 @@ namespace SkyHub {
         cout << "Petugas tidak ditemukan.\n";
     }
 
-    // Mekanisme Push Tumpukan Stack Manual (fitur undo)
-    void pushUndoLog(string statusLama) {
-        topUndoStack = new UndoAction{LAINNYA, statusLama, "", "", "", topUndoStack};
+    // Mekanisme Push Tumpukan Stack Manual (fitur undo) - Ditambahkan Parameter Reference Pointer Stack
+    void pushUndoLog(UndoAction* &topStack, string statusLama) {
+        topStack = new UndoAction{LAINNYA, statusLama, "", "", "", topStack};
     }
 
-    void pushUndoLog(TipeAksi aksi, string statusLama, string kode, string kota, string jam) {
-        topUndoStack = new UndoAction{aksi, statusLama, kode, kota, jam, topUndoStack};
+    void pushUndoLog(UndoAction* &topStack, TipeAksi aksi, string statusLama, string kode, string kota, string jam) {
+        topStack = new UndoAction{aksi, statusLama, kode, kota, jam, topStack};
     }
 
-    void popUndoLog() {
-        if (!topUndoStack) {
-            cout << "Undo Log Kosong! Tidak ada aksi yang bisa dibatalkan.\n";
+    void popUndoLog(UndoAction* &topStack) {
+        if (!topStack) {
+            cout << "Undo Log Kosong! Tidak ada aksi yang bisa dibatalkan untuk menu ini.\n";
             return;
         }
-        UndoAction* temp = topUndoStack;
+        UndoAction* temp = topStack;
         string statusRevert = temp->statusLama;
         
         if (temp->aksi == TAMBAH_JADWAL) {
@@ -237,7 +243,7 @@ namespace SkyHub {
             cout << "[STACK POP] Undo berhasil. Status dikembalikan (Revert aksi): " << statusRevert << "\n";
         }
         
-        topUndoStack = topUndoStack->next;
+        topStack = topStack->next;
         delete temp;
     }
 
@@ -427,6 +433,10 @@ namespace SkyHub {
 
 
 
+    void simpanAllData() {
+        // Diganti namanya menjadi simpanAllData agar menghindari duplikasi fungsional, load tetap memanggil simpanSemuaData jika perlu
+    }
+
     void simpanSemuaData() {
         cout << "[FILE HANDLING] Auto-Saving Data ke Disk...\n";
         
@@ -438,11 +448,11 @@ namespace SkyHub {
         }
         fileJadwal.close();
 
-        ofstream filePenumpang("data_penumpang.txt", ios::app);
-        simpanAVLTreePreOrder(rootPassengerAVL, filePenumpang);
-        filePenumpang.close();
+        ofstream filePassenger("data_penumpang.txt");
+        simpanAVLTreePreOrder(rootPassengerAVL, filePassenger);
+        filePassenger.close();
 
-        ofstream filePetugas("data_petugas.txt", ios::app);
+        ofstream filePetugas("data_petugas.txt");
         if (currentShiftPetugas) {
             PetugasBandara* tempP = currentShiftPetugas;
             do {
@@ -452,19 +462,19 @@ namespace SkyHub {
         }
         filePetugas.close();
 
-        ofstream fileArsip("data_arsip.txt", ios::app);
+        ofstream fileArsip("data_arsip.txt");
         for (const auto& m : arsipKeberangkatan) {
             fileArsip << m << "\n";
         }
         fileArsip.close();
 
-        ofstream fileGerbang("data_gerbang.txt", ios::app);
+        ofstream fileGerbang("data_gerbang.txt");
         for (auto const& pair : informasiGerbangHashMap) {
             fileGerbang << pair.first << "," << pair.second << "\n";
         }
         fileGerbang.close();
 
-        ofstream fileRute("data_rute.txt", ios::app);
+        ofstream fileRute("data_rute.txt");
         for (auto const& pair : navigasiRuteGraph) {
             for (const auto& dest : pair.second) {
                 fileRute << pair.first << "," << dest << "\n";
@@ -582,9 +592,18 @@ namespace SkyHub {
             delete currentShiftPetugas;
             currentShiftPetugas = nullptr;
         }
-        while (topUndoStack) {
-            UndoAction* temp = topUndoStack;
-            topUndoStack = topUndoStack->next;
+        
+        // Membersihkan tumpukan Stack milik Maskapai
+        while (undoStackMaskapai) {
+            UndoAction* temp = undoStackMaskapai;
+            undoStackMaskapai = undoStackMaskapai->next;
+            delete temp;
+        }
+        
+        // Membersihkan tumpukan Stack milik Bandara
+        while (undoStackBandara) {
+            UndoAction* temp = undoStackBandara;
+            undoStackBandara = undoStackBandara->next;
             delete temp;
         }
         cout << "[MEMORY MANAGEMENT] Seluruh memori pointer telah dikembalikan dengan aman (Bebas Memory Leak)!\n";
@@ -743,11 +762,12 @@ int main() {
                     cout << "\n3. Petakan Informasi Lokasi Gerbang Pesawat (Hash Table)";
                     cout << "\n4. Hapus Jadwal Penerbangan (Double LL Delete)";
                     cout << "\n5. Hapus Penumpang (AVL Tree Delete)";
+                    cout << "\n6. Batalkan Aksi Terakhir / Undo (Stack Pop)";
                     cout << "\n0. logout Portal";
                     cout << "\nPilihan Operasi Maskapai: ";
                 
                     // Validasi Input Menu Maskapai
-                    jmlhmenu = 5; // Jumlah menu maskapai
+                    jmlhmenu = 6; // Jumlah menu maskapai sukses dinaikkan menjadi 6 untuk menampung menu undo
                     pilihanMenu = SkyHub::dapatkanPilihanMenu(jmlhmenu);
 
                     switch (pilihanMenu) {
@@ -756,7 +776,7 @@ int main() {
                             cout << "Masukkan Kota Tujuan      : "; cin >> kota;
                             cout << "Masukkan Jam Keberangkatan (Format JJ.MM): "; cin >> jamTerbang; // Berhasil menerima input format titik '08.00'
                             SkyHub::tambahJadwalPenerbangan(kode, kota, jamTerbang);
-                            SkyHub::pushUndoLog(SkyHub::TAMBAH_JADWAL, "Penambahan jadwal kode " + kode, kode, kota, jamTerbang);
+                            SkyHub::pushUndoLog(SkyHub::undoStackMaskapai, SkyHub::TAMBAH_JADWAL, "Penambahan jadwal kode " + kode, kode, kota, jamTerbang);
                             
                             // [INTEGRASI DATA] LINTAS OTORITAS: Mengisi Simpul Baru Jaringan Graph Bandara secara Otomatis
                             SkyHub::addRutePenerbangan("Bandara_Soekarno_Hatta", "Bandara_" + kota);
@@ -774,7 +794,7 @@ int main() {
                                 getline(cin, nama); 
                                 cout << "Masukkan Kode Booking PNR Tiket: "; cin >> pnr;
                                 SkyHub::rootPassengerAVL = SkyHub::insertPassenger(SkyHub::rootPassengerAVL, paspor, nama, pnr);
-                                SkyHub::pushUndoLog("Mendaftarkan paspor " + paspor);
+                                SkyHub::pushUndoLog(SkyHub::undoStackMaskapai, "Mendaftarkan paspor " + paspor);
                                 SkyHub::cariData(1);
                             } else {
                                 cout << "Masukkan Nomor Paspor: "; cin >> paspor;
@@ -791,7 +811,7 @@ int main() {
                                 cout << "\n" << "Masukkan Kode Penerbangan: "; cin >> kode;
                                 cout << "Detail Gerbang & Status  : "; cin >> detailGerbang;
                                 SkyHub::informasiGerbangHashMap[kode] = detailGerbang;
-                                SkyHub::pushUndoLog("Mapping gerbang " + kode);
+                                SkyHub::pushUndoLog(SkyHub::undoStackMaskapai, "Mapping gerbang " + kode);
                             } else {
                                 SkyHub::cetakTabelJadwal();
                                 cout << "\n" << "Ketik Kode Penerbangan: "; cin >> kode;
@@ -815,9 +835,9 @@ int main() {
                                     temp = temp->next;
                                 }
                                 if(findKota != "") {
-                                    SkyHub::pushUndoLog(SkyHub::HAPUS_JADWAL, "Menghapus jadwal " + kode, kode, findKota, findJam);
+                                    SkyHub::pushUndoLog(SkyHub::undoStackMaskapai, SkyHub::HAPUS_JADWAL, "Menghapus jadwal " + kode, kode, findKota, findJam);
                                 } else {
-                                    SkyHub::pushUndoLog("Gagal menghapus jadwal " + kode);
+                                    SkyHub::pushUndoLog(SkyHub::undoStackMaskapai, "Gagal menghapus jadwal " + kode);
                                 }
                             }
                             SkyHub::hapusJadwalPenerbangan(kode);
@@ -832,7 +852,11 @@ int main() {
                             } else {
                                 cout << "Paspor " << paspor << " tidak ditemukan dalam sistem.\n";
                             }
-                            SkyHub::pushUndoLog("Menghapus paspor " + paspor);
+                            SkyHub::pushUndoLog(SkyHub::undoStackMaskapai, "Menghapus paspor " + paspor);
+                            break;
+
+                        case 6:
+                            SkyHub::popUndoLog(SkyHub::undoStackMaskapai);
                             break;
                     }
                 } while (pilihanMenu != 0);
@@ -865,6 +889,7 @@ int main() {
                             cout << "Tingkat Urgensi (1-3 | 3 = Darurat Kerusakan Mesin): "; cin >> subMenu;
                             SkyHub::runwayPriorityQueue.push({kode, subMenu});
                             cout << "Pesawat aman terdaftar di antrean menara pengawas.\n";
+                            SkyHub::pushUndoLog(SkyHub::undoStackBandara, "Registrasi antrean pesawat " + kode);
                             break;
 
                         case 2:
@@ -882,6 +907,7 @@ int main() {
                                 SkyHub::updateStatusOperasional(statusRef); // Default argument triggers STANDBY if not passed, but here we pass ON_DUTY. Let's demonstrate default.
                                 string defStatus = "GANTI_SHIFT";
                                 SkyHub::updateStatusOperasional(defStatus); // Memanggil secara normal
+                                SkyHub::pushUndoLog(SkyHub::undoStackBandara, "Rotasi shift kerja petugas");
                             } else {
                                 cout << "Tidak ada petugas shift yang tersedia.\n";
                             }
@@ -900,6 +926,7 @@ int main() {
                                 string statusUrgensi = (pesawatTerbang.tingkatUrgensi == 3) ? "Darurat" : (pesawatTerbang.tingkatUrgensi == 2 ? "Prioritas" : "Reguler");
                                 string logKeberangkatan = "[" + statusUrgensi + "] Pesawat " + pesawatTerbang.kodePenerbangan + " Berhasil Lepas Landas";
                                 SkyHub::arsipKeberangkatan.push_back(logKeberangkatan);
+                                SkyHub::pushUndoLog(SkyHub::undoStackBandara, "Penerbangan pesawat " + pesawatTerbang.kodePenerbangan);
                             } catch(const exception& e) {
                                 cout << "[EXCEPTION DITANGKAP] Error: " << e.what() << "\n";
                             }
@@ -910,16 +937,18 @@ int main() {
                             cout << "Masukkan Divisi           : "; cin >> kode;
                             SkyHub::tambahPetugasBandara(nama, kode);
                             cout << "Petugas " << nama << " sukses ditambahkan ke sirkulasi shift.\n";
+                            SkyHub::pushUndoLog(SkyHub::undoStackBandara, "Penambahan petugas baru " + nama);
                             break;
 
                         case 6:
                             SkyHub :: cetakPetugasShift(); 
                             cout <<"\n Masukkan Nama Petugas untuk Dihapus: "; cin >> nama;
                             SkyHub::hapusPetugas(nama);
+                            SkyHub::pushUndoLog(SkyHub::undoStackBandara, "Penghapusan petugas " + nama);
                             break;
 
                         case 7:
-                            SkyHub::popUndoLog();
+                            SkyHub::popUndoLog(SkyHub::undoStackBandara);
                             break;
 
                         case 8: {
@@ -966,4 +995,3 @@ int main() {
 
 return 0;
 }
-
