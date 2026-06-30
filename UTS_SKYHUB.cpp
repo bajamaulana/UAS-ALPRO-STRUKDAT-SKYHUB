@@ -432,11 +432,6 @@ namespace SkyHub {
     }
 
 
-
-    void simpanAllData() {
-        // Diganti namanya menjadi simpanAllData agar menghindari duplikasi fungsional, load tetap memanggil simpanSemuaData jika perlu
-    }
-
     void simpanSemuaData() {
         cout << "[FILE HANDLING] Auto-Saving Data ke Disk...\n";
         
